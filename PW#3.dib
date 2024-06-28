@@ -32,9 +32,7 @@
 
 #!csharp
 
-//
-// Вычисление определенного интеграла
-//
+using System.Threading;
 class DefiniteIntegral
 {
     //
@@ -43,11 +41,23 @@ class DefiniteIntegral
     // step - размер одного шага разбиения
     // threadsNumber - число потоков, которые используются для вычислений
     //
-    public static double Solve(double a, double b, Func<double, double> function, double step, int threadsnumber)
+    public static double Solve(double a, double b, Func<double, double> function, double step, int threadsnumber) 
+{ 
+    Barrier barrier = new Barrier(threadsnumber);
+    double s = 0;
+    Parallel.For(0, threadsnumber, (ts) =>
     {
-        // отсюда надо начинать реализацию задачи
-        return 0.0;
-    }
+        double ss = 0;
+        for (int i = ts; i < Convert.ToInt32((b - a) / step); i += threadsnumber)
+        {
+            ss += (function(a + i * step) + function(a + (i + 1) * step))*step / 2;
+        }
+        Interlocked.Exchange(ref s, s + ss);
+        barrier.SignalAndWait();
+    });
+
+    return s;
+}
 }
 
 #!csharp
@@ -63,4 +73,4 @@ Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, X, 1e-4, 2), 1e-4);
 
 Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, SIN, 1e-5, 8), 1e-4);
 
-Assert.Equal(10, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8), 1e-5);
+Assert.Equal(50, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8), 1e-5);
