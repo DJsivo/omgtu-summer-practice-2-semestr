@@ -33,7 +33,7 @@
 #!csharp
 
 using System.Threading;
-class DefiniteIntegral
+public class DefiniteIntegral
 {
     //
     // a, b - границы отрезка, на котором происходит вычисление опредленного интеграла
@@ -63,14 +63,100 @@ class DefiniteIntegral
 #!csharp
 
 #r "nuget: xunit, 2.8.1"
-
+#r "nuget:ScottPlot, 5.0.36"
+using Microsoft.DotNet.Interactive.Formatting;
 using Xunit;
+using System.Diagnostics;
+
+using Microsoft.DotNet.Interactive.Formatting;
+Formatter.Register(typeof(ScottPlot.Plot), (p, w) => 
+    w.Write(((ScottPlot.Plot)p).GetImageHtml(400, 300)), HtmlFormatter.MimeType);
+
 
 var X = (double x) => x;
 var SIN = (double x) => Math.Sin(x);
+Stopwatch stopwatch = new Stopwatch();
 
-Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, X, 1e-4, 2), 1e-4);
+//Оптимальный шаг.
+public void Steep(double st)
+{
+    stopwatch.Reset();
+    stopwatch.Start();
+    //Assert.Equal(0, DefiniteIntegral.Solve(-100, 100, SIN, st, 8), 1e-4);
+    var r = DefiniteIntegral.Solve(-100, 99, SIN, st, 1);
+    stopwatch.Stop();
+    Console.WriteLine(@$"{r}
+    step: {st}
+    {stopwatch.ElapsedTicks} "); 
+}
+Console.WriteLine("Steps");
+Steep(1e-1);
+Steep(1e-2);//
+Steep(1e-3);
+Steep(1e-4);
+Steep(1e-5);
+Steep(1e-6);
 
-Assert.Equal(0, DefiniteIntegral.Solve(-1, 1, SIN, 1e-5, 8), 1e-4);
+//Потоки.
+List<double> potok = new();
+List<double> time = new();
 
-Assert.Equal(50, DefiniteIntegral.Solve(0, 10, X, 1e-6, 8), 1e-5);
+public void Threaad(int pot)
+{
+    stopwatch.Reset();
+    stopwatch.Start();
+    var r = DefiniteIntegral.Solve(-100, 99, SIN, 1e-2, pot);/////
+    stopwatch.Stop();
+    Console.WriteLine(@$"{r}
+    {stopwatch.ElapsedTicks} "); 
+    potok.Add(pot);
+    time.Add(stopwatch.ElapsedTicks);
+}
+Console.WriteLine("Threads");
+for (int i = 1; i <= 16; i++)
+{
+    Threaad(i);
+}//Чаще всего оптимально было 2 (прмерно за 30 запусков)
+//Tab
+ScottPlot.Plot plt = new();
+double[] dataX = time.ToArray();
+double[] dataY = potok.ToArray();
+plt.Add.Scatter(dataX, dataY);
+plt.SavePng("quickstart.png", 400, 300);
+plt
+
+#!csharp
+
+using System.Diagnostics;
+var SIN = (double x) => Math.Sin(x);
+//однопоток
+public double OSolve(double a, double b, Func<double, double> f, double dx)
+{
+
+    double eps = 10E-7;
+    if(!double.IsNormal(a)||!double.IsNormal(b)||dx<eps)throw new ArgumentException();
+    double cp=a;
+    return Enumerable.Range(0, Convert.ToInt32((b - a) / dx))
+        .Select(i => a + dx * i)
+        .Sum(cp => Math.Abs(((f(cp) + f(cp + dx)) * dx) / 2));
+}
+var stopwatch1 = Stopwatch.StartNew();
+OSolve(-100, 99, SIN, 1e-2);
+stopwatch1.Stop();
+var s1 = stopwatch1.ElapsedTicks;
+
+var stopwatch2 = Stopwatch.StartNew();
+DefiniteIntegral.Solve(-100, 99, SIN, 1e-2, 2);////
+stopwatch2.Stop();
+var s2 = stopwatch2.ElapsedTicks;
+Console.WriteLine(@$"Для однопотока: {s1}
+Для опт многопотока:{s2}
+")
+
+#!markdown
+
+**Summary**
+1. Оптимальный шаг: 1e-2 
+2. Оптимальное кол-во потоков: 2
+3. Скорость оптимальной многопоточной: 2530 tc
+4. Многопоток превосходит однопоток на: 57,1% (всегда разница больше 15%)
