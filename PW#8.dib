@@ -33,15 +33,6 @@
 Чтобы избежать мертвой блокировки потока, необходимо ввести понятие Планировщика, который будет отвечать за выбор следующей длительной задачи для выполнения,
 а чтение из очереди оставить только для новых операций. 
 
-#!csharp
-
-public interface IScheduler
-{
-    bool HasCommand()
-    ICommand Select();
-    void Add(ICommand cmd);
-}
-
 #!markdown
 
 Необходимо реализовать поток, который способен реализоввывать длительные операции.
@@ -55,3 +46,151 @@ public interface IScheduler
 Необходимо учесть этот момент при реализации очереди.
 
 2. Для обепечения справедливости стратегии планировщика в слабом смысле использовать стратегию Round Robbin (циклическую) для определения следующего потока на исполнение.
+
+#!csharp
+
+using System.Threading;
+using System.Collections.Concurrent;
+
+#!csharp
+
+public interface ICommand
+{
+    void Execute();
+}
+
+#!csharp
+
+public interface IScheduler
+{
+    bool HasCommand();
+    ICommand Select();
+    void Add(ICommand cmd);
+}
+
+#!csharp
+
+public class RRS: IScheduler {
+    readonly ConcurrentQueue<ICommand> commands = new ConcurrentQueue<ICommand>();
+    public bool HasCommand() => !commands.IsEmpty;
+    public void Add(ICommand cmd) => commands.Enqueue(cmd);
+
+    public ICommand Select() {
+        ICommand command = null; 
+        if (HasCommand()){
+            commands.TryDequeue(out command);
+        }
+
+        return command;
+    }
+}
+
+#!csharp
+
+public class ServerThread
+{
+    private readonly ConcurrentQueue<ICommand> commands = new ConcurrentQueue<ICommand>();
+    private readonly IScheduler scheduler = new RRS();
+    public bool SoftStopFlag { get; set; } = false;
+    public bool HardStopFlag { get; set; } = false;
+    private readonly Thread main;
+
+    public ServerThread()
+    {
+        main = new Thread(() =>
+        {
+            while (true)
+            {
+                ICommand command;
+                if (commands.TryDequeue(out command))
+                {
+                    scheduler.Add(command);
+                }
+
+                ICommand commandd = scheduler.Select();
+                if (commandd != null)
+                {
+                    try
+                    {
+                        commandd.Execute();
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e.Message);
+                    }
+                }
+                else if (SoftStopFlag && !scheduler.HasCommand())
+                {
+                    Console.WriteLine("Мягкая остановка");
+                    break;
+                }
+                else
+                {
+                    Thread.Sleep(30);
+                }
+
+                if (HardStopFlag)
+                {
+                    Console.WriteLine("Жёсткая остановка");
+                    break;
+                }
+            }
+        });
+
+        main.Start();
+    }
+
+    public void AddCommand(ICommand c) => commands.Enqueue(c);
+
+    public void SetSoftStop() => SoftStopFlag = true;
+
+    public void SetHardStop() => HardStopFlag = true;
+}
+
+#!csharp
+
+public class HardStop : ICommand
+{
+    private readonly ServerThread serverThread;
+
+    public HardStop(ServerThread serverThread)
+    {
+        this.serverThread = serverThread;
+    }
+
+    public void Execute()
+    {
+        this.serverThread.SetHardStop();
+    }
+}
+
+#!csharp
+
+public class SoftStop : ICommand
+{
+    private readonly ServerThread serverThread;
+
+    public SoftStop(ServerThread serverThread)
+    {
+        this.serverThread = serverThread;
+    }
+
+    public void Execute()
+    {
+        this.serverThread.SetSoftStop();
+    }
+}
+
+#!csharp
+
+public class OutpCommand : ICommand
+{
+    private readonly string massage;
+
+    public OutpCommand(string massage)
+    {
+        this.massage = massage;
+    }
+
+    public void Execute() => Console.WriteLine(massage);
+}
