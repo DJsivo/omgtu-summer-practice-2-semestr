@@ -43,4 +43,173 @@
 
 #!markdown
 
+#r "nuget:ScottPlot, 5.0.36"
+
+using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.Threading;
+using System.Diagnostics;
+using Microsoft.DotNet.Interactive.Formatting;
+
+Formatter.Register(typeof(ScottPlot.Plot), (p, w) => 
+    w.Write(((ScottPlot.Plot)p).GetImageHtml(400, 300)), HtmlFormatter.MimeType);
+
+#!markdown
+
+// Пример для BlockingCollection
+
+List<double> tBC = new List<double>();
+for (int i = 0; i < 10; i++)
+{
+    BlockingCollection<int> bC = new BlockingCollection<int>();
+    double p = 0;
+    double c = 0;
+    
+    ManualResetEvent pMRE = new ManualResetEvent(false);
+    ManualResetEvent cMRE = new ManualResetEvent(false);
+
+    Thread pT = new Thread(() =>
+    {
+        pMRE.Set(); 
+        cMRE.WaitOne();
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        for (int j = 0; j < 1000000; j++)
+        {
+            bC.Add(j);
+        }
+        stopwatch.Stop();
+        p = stopwatch.Elapsed.TotalMilliseconds;
+    });
+
+    Thread cT = new Thread(() =>
+    {
+        pMRE.WaitOne();
+        cMRE.Set();
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        for (int j = 0; j < 1000000; j++) 
+        {
+            bC.Take();
+        }
+        stopwatch.Stop();
+        c = stopwatch.Elapsed.TotalMilliseconds;
+    });
+    
+    pT.Start(); 
+    cT.Start();
+    pT.Join();
+    cT.Join();
+    tBC.Add(p + c);
+}
+
+ScottPlot.Plot plt = new();
+int[] dataX = Enumerable.Range(1,10).ToArray<int>();
+plt.Add.Scatter(dataX, tBC.ToArray()); 
+plt.Save("BlockingCollection.png", 400, 300);
+plt
+
+#!markdown
+
+//Пример для ConcurrentQueue
+
+List<double> tCQ = new List<double>();
+for (int i = 0; i < 10; i++)
+{
+    ConcurrentQueue<int> cQ = new ConcurrentQueue<int>();
+    double p = 0;
+    double c = 0;
+    
+    ManualResetEvent pMRE = new ManualResetEvent(false);
+    ManualResetEvent cMRE = new ManualResetEvent(false);
+
+    Thread pT = new Thread(() =>
+    {
+        pMRE.Set();
+        cMRE.WaitOne();
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        for (int j = 0; j < 1000000; j++)
+        {
+            cQ.Enqueue(j);
+        }
+        stopwatch.Stop();
+        p = stopwatch.Elapsed.TotalMilliseconds;
+    });
+
+    Thread cT = new Thread(() =>
+    {
+        pMRE.WaitOne();
+        cMRE.Set();
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        for (int j = 0; j < 1000000; j++)
+        {
+            cQ.TryDequeue(out int result);
+        }
+        stopwatch.Stop();
+        c = stopwatch.Elapsed.TotalMilliseconds;
+    });
+
+    pT.Start();
+    cT.Start();
+    pT.Join();
+    cT.Join();
+    tCQ.Add(p + c);
+}
+
+
+ScottPlot.Plot plt = new();
+int[] dataX = Enumerable.Range(1,10).ToArray<int>();
+plt.Add.Scatter(dataX, tCQ.ToArray()); 
+plt.Save("ConcurrentQueue.png", 400, 300);
+plt
+
+#!markdown
+
+/ Пример для непотокобезопасной очереди
+
+List<double> tQ = new List<double>();
+
+for (int i = 0; i < 10; i++)
+{
+    Queue<int> q = new Queue<int>();
+    Stopwatch pStopwatch = Stopwatch.StartNew();
+    for (int j = 0; j < 1000000; j++)
+    {
+        q.Enqueue(j);
+    } 
+    pStopwatch.Stop();
+    var p = pStopwatch.Elapsed.TotalMilliseconds;
+
+    Stopwatch cStopwatch = Stopwatch.StartNew();
+    for (int j = 0; j < 1000000; j++)
+    {
+        q.Dequeue();
+    }
+    cStopwatch.Stop();
+    var c = cStopwatch.Elapsed.TotalMilliseconds;
+
+    tQ.Add(p + c);
+}
+ScottPlot.Plot plt = new();
+int[] dataX = Enumerable.Range(1,10).ToArray<int>();
+plt.Add.Scatter(dataX, tQ.ToArray()); 
+plt.Save("Queue.png", 400, 300);
+plt
+
+#!markdown
+
+var tBCA = tBC.Average();
+var tCQA = tCQ.Average();
+var tQA = tQ.Average();
+Console.WriteLine(@$"Среднее для:
+BlockingCollection - {tBCA}
+ConcurrentQueue - {tCQA}
+Queue - {tQA}
+")
+
+#!markdown
+
 ## Вывод
+Среди потокобезопасных коллекций ConcurrentQueue и BlockingCollection, эффективнее оказалась ConcurrentQueue. Разница между ConcurrentQueue и непотокобезопасной Queue составила 32%.
