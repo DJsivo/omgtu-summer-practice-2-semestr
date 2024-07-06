@@ -20,7 +20,14 @@
 
 #!csharp
 
-interface ICommand
+using System;
+using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
+
+#!csharp
+
+public interface ICommand
 {
     void Execute();
 }
@@ -36,6 +43,67 @@ public class TestCommand(int id) : ICommand
     }
 }
 
-#!markdown
+#!csharp
 
-Необходимо проиллюстрировать выполнение 5 экземпляров TestCommand 3 раза, затем остановить поток с помощью HardStop.
+public class TaskScheduler
+{
+    private readonly BlockingCollection<ICommand> _commands = new BlockingCollection<ICommand>();
+    private CancellationTokenSource _cts = new CancellationTokenSource();
+    private Task _task;
+
+    public TaskScheduler()
+    {
+        _task = Task.Run(() => ProcessCommands(_cts.Token));
+    }
+
+    private void ProcessCommands(CancellationToken token)
+    {
+        try
+        {
+            foreach (var command in _commands.GetConsumingEnumerable(token))
+            {
+                command.Execute();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Handle the cancellation
+        }
+    }
+
+    public void AddCommand(ICommand command)
+    {
+        _commands.Add(command);
+    }
+
+    public void HardStop()
+    {
+        _cts.Cancel();
+        _commands.CompleteAdding();
+        try
+        {
+            _task.Wait();
+        }
+        catch (AggregateException ae)
+        {
+            ae.Handle(e => e is OperationCanceledException);
+        }
+    }
+}
+
+#!csharp
+
+TaskScheduler scheduler = new TaskScheduler();
+
+for (int i = 0; i < 5; i++)
+{
+    var command = new TestCommand(i);
+    for (int j = 0; j < 3; j++)
+    {
+        scheduler.AddCommand(command);
+    }
+}
+
+Thread.Sleep(1000); // Даем немного времени на выполнение команд
+
+scheduler.HardStop();
