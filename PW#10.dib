@@ -36,3 +36,173 @@
 1. [Паттерн Сообщение](https://www.enterpriseintegrationpatterns.com/patterns/messaging/Message.html)
 2. [Паттерн Роутер - весь раздел про Роутеры](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageRoutingIntro.html)
 3. [Обмен сообщеними](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageConstructionIntro.html)
+
+#!csharp
+
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+
+#!csharp
+
+public interface ICommand
+{
+    void Execute();
+}
+
+public class TestCommand : ICommand
+{
+    private int id;
+    private int counter = 0;
+    private Queue<string> messages = new Queue<string>();
+
+    public TestCommand(int id)
+    {
+        this.id = id;
+    }
+
+    public void Execute()
+    {
+        while (messages.Count > 0)
+        {
+            string message = messages.Dequeue();
+            Console.WriteLine($"Команда {id}, обработка сообщения: {message}");
+        }
+        Console.WriteLine($"Команда {id} вызов {++counter}");
+    }
+
+    public void EnqueueMessage(string message)
+    {
+        messages.Enqueue(message);
+    }
+
+    public int Id => id;
+    public Queue<string> Messages => messages;
+}
+
+#!csharp
+
+public class RouterCommand : ICommand
+{
+    private ConcurrentQueue<(int CommandId, string Message)> routerQueue = new ConcurrentQueue<(int CommandId, string Message)>();
+    private Dictionary<int, TestCommand> commandDict = new Dictionary<int, TestCommand>();
+
+    public void Execute()
+    {
+        while (routerQueue.TryDequeue(out var item))
+        {
+            if (commandDict.ContainsKey(item.CommandId))
+            {
+                commandDict[item.CommandId].EnqueueMessage(item.Message);
+            }
+            else
+            {
+                Console.WriteLine($"Неизвестный адресат: {item.CommandId}");
+            }
+        }
+    }
+
+    public void EnqueueMessage(int commandId, string message)
+    {
+        routerQueue.Enqueue((commandId, message));
+    }
+
+    public void RegisterCommand(TestCommand command)
+    {
+        commandDict[command.Id] = command;
+    }
+
+    public void UnregisterCommand(int commandId)
+    {
+        commandDict.Remove(commandId);
+    }
+}
+
+#!csharp
+
+public class TaskScheduler
+{
+    private readonly BlockingCollection<ICommand> _commands = new BlockingCollection<ICommand>();
+    private CancellationTokenSource _cts = new CancellationTokenSource();
+    private Task _task;
+    private RouterCommand _router;
+
+    public TaskScheduler()
+    {
+        _router = new RouterCommand();
+        _task = Task.Run(() => ProcessCommands(_cts.Token));
+    }
+
+    private void ProcessCommands(CancellationToken token)
+    {
+        try
+        {
+            foreach (var command in _commands.GetConsumingEnumerable(token))
+            {
+                command.Execute();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            
+        }
+    }
+
+    public void AddCommand(ICommand command)
+    {
+        _commands.Add(command);
+        if (command is TestCommand testCommand)
+        {
+            _router.RegisterCommand(testCommand);
+        }
+    }
+
+    public void RemoveCommand(ICommand command)
+    {
+        if (command is TestCommand testCommand)
+        {
+            _router.UnregisterCommand(testCommand.Id);
+        }
+    }
+
+    public void AddMessage(int commandId, string message)
+    {
+        _router.EnqueueMessage(commandId, message);
+    }
+
+    public void HardStop()
+    {
+        _cts.Cancel();
+        _commands.CompleteAdding();
+        try
+        {
+            _task.Wait();
+        }
+        catch (AggregateException ae)
+        {
+            ae.Handle(e => e is OperationCanceledException);
+        }
+    }
+}
+
+#!csharp
+
+TaskScheduler scheduler = new TaskScheduler();
+
+        List<TestCommand> commands = new List<TestCommand>();
+        for (int i = 0; i < 2; i++)
+        {
+            var command = new TestCommand(i);
+            commands.Add(command);
+            scheduler.AddCommand(command);
+        }
+
+        scheduler.AddMessage(0, "Сообщение для команды 0");
+        scheduler.AddMessage(1, "Сообщение для команды 1");
+        scheduler.AddMessage(2, "Сообщение для несуществующей команды");
+
+        Thread.Sleep(1000); // Даем немного времени на выполнение команд
+
+        scheduler.HardStop();
